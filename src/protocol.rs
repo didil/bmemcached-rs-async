@@ -4,8 +4,8 @@ use std::net::{TcpStream, ToSocketAddrs};
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 use enum_primitive::FromPrimitive;
 
-use constants::*;
-use errors::{ErrorKind, Result};
+use crate::constants::*;
+use crate::errors::{ErrorKind, Result};
 
 pub const KEY_MAXIMUM_SIZE: usize = 250;
 
@@ -453,7 +453,7 @@ mod tests {
     use std::iter;
 
     use super::*;
-    use errors::{Error, Result};
+    use crate::errors::{Error, Result};
 
     #[test]
     fn set() {

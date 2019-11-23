@@ -1,5 +1,5 @@
-use constants::StoredType;
-use protocol::{Status, KEY_MAXIMUM_SIZE};
+use crate::constants::StoredType;
+use crate::protocol::{Status, KEY_MAXIMUM_SIZE};
 
 error_chain! {
     foreign_links {

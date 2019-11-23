@@ -8,6 +8,7 @@ repository = "https://github.com/jaysonsantos/bmemcached-rs"
 documentation = "https://jaysonsantos.github.io/bmemcached-rs/bmemcached/index.html"
 license = "MIT"
 readme = "README.md"
+edition = "2018"
 
 [dependencies]
 bitflags = "1.0.3"

@@ -3,8 +3,8 @@ use std::sync::{Arc, Mutex};
 
 use conhash::{ConsistentHash, Node};
 
-use errors::Result;
-use protocol;
+use crate::errors::Result;
+use crate::protocol;
 
 #[derive(Debug, Clone)]
 struct ClonableProtocol {
