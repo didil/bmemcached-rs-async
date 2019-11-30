@@ -1,11 +1,15 @@
-use std::io::{BufReader, BufWriter, Cursor, Read, Write};
-use std::net::{TcpStream, ToSocketAddrs};
+use async_std::io::{BufReader, BufWriter};
+use async_std::net::{TcpStream, ToSocketAddrs};
+use async_std::prelude::*;
+use std::io::{Cursor};
 
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 use enum_primitive::FromPrimitive;
 
 use crate::constants::*;
 use crate::errors::{ErrorKind, Result};
+
+use crate::bytesext::{AsyncReadBytesExt, AsyncWriteBytesExt};
 
 pub const KEY_MAXIMUM_SIZE: usize = 250;
 
@@ -98,9 +102,9 @@ pub trait FromMemcached: Sized {
 }
 
 impl Protocol {
-    pub fn connect<A: ToSocketAddrs>(addr: A) -> Result<Protocol> {
+    pub async fn connect<A: ToSocketAddrs>(addr: A) -> Result<Protocol> {
         Ok(Protocol {
-            connection: BufReader::new(TcpStream::connect(addr)?),
+            connection: BufReader::new(TcpStream::connect(addr).await?),
         })
     }
 
@@ -133,26 +137,26 @@ impl Protocol {
         })
     }
 
-    fn write_request(&mut self, request: Request, final_payload: &[u8]) -> Result<()> {
+    async fn write_request(&mut self, request: Request, final_payload: &[u8]) -> Result<()> {
         let connection = self.connection.get_mut();
         let mut buf = BufWriter::new(connection);
-        buf.write_u8(request.magic)?;
-        buf.write_u8(request.opcode)?;
-        buf.write_u16::<BigEndian>(request.key_length)?;
-        buf.write_u8(request.extras_length)?;
-        buf.write_u8(request.data_type)?;
-        buf.write_u16::<BigEndian>(request.reserved)?;
-        buf.write_u32::<BigEndian>(request.body_length)?;
-        buf.write_u32::<BigEndian>(request.opaque)?;
-        buf.write_u64::<BigEndian>(request.cas)?;
-        buf.write(final_payload)?;
-        buf.flush()?;
+        buf.write_u8(request.magic).await?;
+        buf.write_u8(request.opcode).await?;
+        buf.write_u16::<BigEndian>(request.key_length).await?;
+        buf.write_u8(request.extras_length).await?;
+        buf.write_u8(request.data_type).await?;
+        buf.write_u16::<BigEndian>(request.reserved).await?;
+        buf.write_u32::<BigEndian>(request.body_length).await?;
+        buf.write_u32::<BigEndian>(request.opaque).await?;
+        buf.write_u64::<BigEndian>(request.cas).await?;
+        buf.write(final_payload).await?;
+        buf.flush().await?;
         Ok(())
     }
 
-    fn read_response(&mut self) -> Result<Response> {
+    async fn read_response(&mut self) -> Result<Response> {
         let buf = &mut self.connection;
-        let magic: u8 = buf.read_u8()?;
+        let magic: u8 = buf.read_u8().await?;
         if magic != Type::Response as u8 {
             // TODO Consume the stream, disconnect or something?
             debug!("Server sent an unknown magic code {:?}", magic);
@@ -160,27 +164,33 @@ impl Protocol {
         }
         Ok(Response {
             magic,
-            opcode: buf.read_u8()?,
-            key_length: buf.read_u16::<BigEndian>()?,
-            extras_length: buf.read_u8()?,
-            data_type: buf.read_u8()?,
-            status: buf.read_u16::<BigEndian>()?,
-            body_length: buf.read_u32::<BigEndian>()?,
-            opaque: buf.read_u32::<BigEndian>()?,
-            cas: buf.read_u64::<BigEndian>()?,
+            opcode: buf.read_u8().await?,
+            key_length: buf.read_u16::<BigEndian>().await?,
+            extras_length: buf.read_u8().await?,
+            data_type: buf.read_u8().await?,
+            status: buf.read_u16::<BigEndian>().await?,
+            body_length: buf.read_u32::<BigEndian>().await?,
+            opaque: buf.read_u32::<BigEndian>().await?,
+            cas: buf.read_u64::<BigEndian>().await?,
         })
     }
 
-    fn consume_body(&mut self, size: u32) -> Result<()> {
+    async fn consume_body(&mut self, size: u32) -> Result<()> {
         debug!("Consuming body");
         let mut buf: Vec<u8> = vec![0; size as usize];
-        self.connection.read(&mut *buf)?;
+        self.connection.read(&mut *buf).await?;
         let str_buf = String::from_utf8(buf)?;
         debug!("Consumed body {:?}", str_buf);
         Ok(())
     }
 
-    fn set_add_replace<K, V>(&mut self, command: Command, key: K, value: V, time: u32) -> Result<()>
+    async fn set_add_replace<K, V>(
+        &mut self,
+        command: Command,
+        key: K,
+        value: V,
+        time: u32,
+    ) -> Result<()>
     where
         K: AsRef<[u8]>,
         V: ToMemcached,
@@ -196,14 +206,15 @@ impl Protocol {
         final_payload.write_u32::<BigEndian>(flags.bits())?;
         final_payload.write_u32::<BigEndian>(time)?;
         // After flags key and value
-        final_payload.write(key)?;
-        final_payload.write(&value)?;
-        self.write_request(request, final_payload.as_slice())?;
-        let response = self.read_response()?;
+        std::io::Write::write(&mut final_payload, key)?;
+        std::io::Write::write(&mut final_payload, &value)?;
+        self.write_request(request, final_payload.as_slice())
+            .await?;
+        let response = self.read_response().await?;
         match Status::from_u16(response.status) {
             Some(Status::Success) => Ok(()),
             Some(rest) => {
-                self.consume_body(response.body_length)?;
+                self.consume_body(response.body_length).await?;
                 bail!(ErrorKind::Status(rest))
             }
             None => bail!(
@@ -213,43 +224,44 @@ impl Protocol {
         }
     }
 
-    pub fn set<K, V>(&mut self, key: K, value: V, time: u32) -> Result<()>
+    pub async fn set<K, V>(&mut self, key: K, value: V, time: u32) -> Result<()>
     where
         K: AsRef<[u8]>,
         V: ToMemcached,
     {
-        self.set_add_replace(Command::Set, key, value, time)
+        self.set_add_replace(Command::Set, key, value, time).await
     }
 
-    pub fn add<K, V>(&mut self, key: K, value: V, time: u32) -> Result<()>
+    pub async fn add<K, V>(&mut self, key: K, value: V, time: u32) -> Result<()>
     where
         K: AsRef<[u8]>,
         V: ToMemcached,
     {
-        self.set_add_replace(Command::Add, key, value, time)
+        self.set_add_replace(Command::Add, key, value, time).await
     }
 
-    pub fn replace<K, V>(&mut self, key: K, value: V, time: u32) -> Result<()>
+    pub async fn replace<K, V>(&mut self, key: K, value: V, time: u32) -> Result<()>
     where
         K: AsRef<[u8]>,
         V: ToMemcached,
     {
         self.set_add_replace(Command::Replace, key, value, time)
+            .await
     }
 
-    pub fn get<K, V>(&mut self, key: K) -> Result<V>
+    pub async fn get<K, V>(&mut self, key: K) -> Result<V>
     where
         K: AsRef<[u8]>,
         V: FromMemcached,
     {
         let key = key.as_ref();
         let request = Protocol::build_request(Command::Get, key.len(), 0 as usize, 0, 0, 0x00)?;
-        self.write_request(request, key)?;
-        let response = self.read_response()?;
+        self.write_request(request, key).await?;
+        let response = self.read_response().await?;
         match Status::from_u16(response.status) {
             Some(Status::Success) => {}
             Some(status) => {
-                self.consume_body(response.body_length)?;
+                self.consume_body(response.body_length).await?;
                 bail!(ErrorKind::Status(status));
             }
             None => {
@@ -259,29 +271,29 @@ impl Protocol {
                 );
             }
         };
-        let flags = StoredType::from_bits(self.connection.read_u32::<BigEndian>()?).unwrap();
+        let flags = StoredType::from_bits(self.connection.read_u32::<BigEndian>().await?).unwrap();
         let mut outbuf = vec![0; (response.body_length - response.extras_length as u32) as usize];
-        self.connection.read_exact(&mut outbuf)?;
+        self.connection.read_exact(&mut outbuf).await?;
         FromMemcached::get_value(flags, outbuf)
     }
 
-    pub fn delete<K>(&mut self, key: K) -> Result<()>
+    pub async fn delete<K>(&mut self, key: K) -> Result<()>
     where
         K: AsRef<[u8]>,
     {
         let key = key.as_ref();
         let request = Protocol::build_request(Command::Delete, key.len(), 0 as usize, 0, 0, 0x00)?;
-        self.write_request(request, key)?;
-        let response = self.read_response()?;
+        self.write_request(request, key).await?;
+        let response = self.read_response().await?;
 
         match Status::from_u16(response.status) {
             Some(Status::Success) => Ok(()),
             Some(Status::KeyNotFound) => {
-                self.consume_body(response.body_length)?;
+                self.consume_body(response.body_length).await?;
                 Ok(())
             }
             Some(status) => {
-                self.consume_body(response.body_length)?;
+                self.consume_body(response.body_length).await?;
                 bail!(ErrorKind::Status(status))
             }
             None => bail!(
@@ -291,7 +303,7 @@ impl Protocol {
         }
     }
 
-    fn increment_decrement<K>(
+    async fn increment_decrement<K>(
         &mut self,
         key: K,
         amount: u64,
@@ -309,31 +321,45 @@ impl Protocol {
         final_payload.write_u64::<BigEndian>(amount)?;
         final_payload.write_u64::<BigEndian>(initial)?;
         final_payload.write_u32::<BigEndian>(time)?;
-        final_payload.write(key)?;
-        self.write_request(request, &final_payload)?;
-        let response = self.read_response()?;
+        std::io::Write::write(&mut final_payload, key)?;
+        self.write_request(request, &final_payload).await?;
+        let response = self.read_response().await?;
         match Status::from_u16(response.status) {
-            Some(Status::Success) => Ok(self.connection.read_u64::<BigEndian>()?),
+            Some(Status::Success) => Ok(self.connection.read_u64::<BigEndian>().await?),
             Some(status) => {
-                self.consume_body(response.body_length)?;
+                self.consume_body(response.body_length).await?;
                 bail!(ErrorKind::Status(status))
             }
             None => bail!("Server sent an unknown status code"),
         }
     }
 
-    pub fn increment<K>(&mut self, key: K, amount: u64, initial: u64, time: u32) -> Result<u64>
+    pub async fn increment<K>(
+        &mut self,
+        key: K,
+        amount: u64,
+        initial: u64,
+        time: u32,
+    ) -> Result<u64>
     where
         K: AsRef<[u8]>,
     {
         self.increment_decrement(key, amount, initial, time, Command::Increment)
+            .await
     }
 
-    pub fn decrement<K>(&mut self, key: K, amount: u64, initial: u64, time: u32) -> Result<u64>
+    pub async fn decrement<K>(
+        &mut self,
+        key: K,
+        amount: u64,
+        initial: u64,
+        time: u32,
+    ) -> Result<u64>
     where
         K: AsRef<[u8]>,
     {
         self.increment_decrement(key, amount, initial, time, Command::Decrement)
+            .await
     }
 }
 
@@ -455,145 +481,145 @@ mod tests {
     use super::*;
     use crate::errors::{Error, Result};
 
-    #[test]
-    fn set() {
+    #[async_std::test]
+    async fn set() {
         let _ = env_logger::try_init();
-        let mut p = Protocol::connect("127.0.0.1:11211").unwrap();
+        let mut p = Protocol::connect("127.0.0.1:11211").await.unwrap();
         let key = "Hello Set";
         let value = "World";
-        p.set(key, value, 1000).unwrap();
-        p.delete(key).unwrap();
+        p.set(key, value, 1000).await.unwrap();
+        p.delete(key).await.unwrap();
         let data: String = iter::repeat("0").take(1024 * 1024).collect();
-        let err = p.set("big-data", &data, 100_000).unwrap_err();
+        let err = p.set("big-data", &data, 100_000).await.unwrap_err();
         match err.kind() {
             &ErrorKind::Status(Status::ValueTooBig) => {}
             e => panic!("Value should not be {:?}", e),
         }
     }
 
-    #[test]
-    fn set_u8() {
+    #[async_std::test]
+    async fn set_u8() {
         let _ = env_logger::try_init();
-        let mut p = Protocol::connect("127.0.0.1:11211").unwrap();
+        let mut p = Protocol::connect("127.0.0.1:11211").await.unwrap();
         let key = "Hello";
         let value = 1 as u8;
-        p.set(key, value, 1000).unwrap();
-        p.delete(key).unwrap();
+        p.set(key, value, 1000).await.unwrap();
+        p.delete(key).await.unwrap();
     }
 
-    #[test]
-    fn set_u16() {
+    #[async_std::test]
+    async fn set_u16() {
         let _ = env_logger::try_init();
-        let mut p = Protocol::connect("127.0.0.1:11211").unwrap();
+        let mut p = Protocol::connect("127.0.0.1:11211").await.unwrap();
         let key = "Hello";
         let value = 1 as u16;
-        p.set(key, value, 1000).unwrap();
-        p.delete(key).unwrap();
+        p.set(key, value, 1000).await.unwrap();
+        p.delete(key).await.unwrap();
     }
 
-    #[test]
-    fn set_u32() {
+    #[async_std::test]
+    async fn set_u32() {
         let _ = env_logger::try_init();
-        let mut p = Protocol::connect("127.0.0.1:11211").unwrap();
+        let mut p = Protocol::connect("127.0.0.1:11211").await.unwrap();
         let key = "Hello";
         let value = 1 as u32;
-        p.set(key, value, 100).unwrap();
-        p.delete(key).unwrap();
+        p.set(key, value, 100).await.unwrap();
+        p.delete(key).await.unwrap();
     }
 
-    #[test]
-    fn set_u64() {
+    #[async_std::test]
+    async fn set_u64() {
         let _ = env_logger::try_init();
-        let mut p = Protocol::connect("127.0.0.1:11211").unwrap();
+        let mut p = Protocol::connect("127.0.0.1:11211").await.unwrap();
         let key = "Hello";
         let value = 1 as u64;
-        p.set(key, value, 1000).unwrap();
-        p.delete(key).unwrap();
+        p.set(key, value, 1000).await.unwrap();
+        p.delete(key).await.unwrap();
     }
 
-    #[test]
-    fn set_slice() {
+    #[async_std::test]
+    async fn set_slice() {
         let _ = env_logger::try_init();
-        let mut p = Protocol::connect("127.0.0.1:11211").unwrap();
+        let mut p = Protocol::connect("127.0.0.1:11211").await.unwrap();
         let key = "Hello";
         let value = vec![1, 2, 3];
-        p.set(key, &value[..], 1000).unwrap();
-        p.delete(key).unwrap();
+        p.set(key, &value[..], 1000).await.unwrap();
+        p.delete(key).await.unwrap();
     }
 
-    #[test]
-    fn add_key() {
+    #[async_std::test]
+    async fn add_key() {
         let _ = env_logger::try_init();
-        let mut p = Protocol::connect("127.0.0.1:11211").unwrap();
+        let mut p = Protocol::connect("127.0.0.1:11211").await.unwrap();
         let key = "Hello Add";
         let value = "World";
-        p.add(key, value, 10).unwrap();
-        let result = p.add(key, value, 10);
+        p.add(key, value, 10).await.unwrap();
+        let result = p.add(key, value, 10).await;
         match result {
             Ok(()) => panic!("Add key should return error"),
             Err(Error(ErrorKind::Status(Status::KeyExists), _)) => {}
             Err(_) => panic!("Some strange error that should not happen"),
         };
-        p.delete(key).unwrap();
+        p.delete(key).await.unwrap();
     }
 
-    #[test]
-    fn get_key() {
+    #[async_std::test]
+    async fn get_key() {
         let _ = env_logger::try_init();
-        let mut p = Protocol::connect("127.0.0.1:11211").unwrap();
+        let mut p = Protocol::connect("127.0.0.1:11211").await.unwrap();
         let key = "Hello Get";
         let value = "World";
-        p.set(key, value, 10000).unwrap();
-        let rv: String = p.get(key).unwrap();
+        p.set(key, value, 10000).await.unwrap();
+        let rv: String = p.get(key).await.unwrap();
         assert_eq!(rv, value);
 
-        let not_found: Result<String> = p.get("not found".to_string());
+        let not_found: Result<String> = p.get("not found".to_string()).await;
         match not_found {
             Ok(_) => panic!("This key should not exist"),
             Err(Error(ErrorKind::Status(Status::KeyNotFound), _)) => {}
             Err(_) => panic!("This should return KeyNotFound"),
         };
-        p.delete(key).unwrap();
+        p.delete(key).await.unwrap();
         let big_key: String = iter::repeat("0").take(260).collect();
-        match p.get::<_, Vec<u8>>(big_key) {
+        match p.get::<_, Vec<u8>>(big_key).await {
             Ok(_) => panic!("Should be an error"),
             Err(Error(ErrorKind::KeyLengthTooLong(260), _)) => {}
             Err(e) => panic!("This should be KeyLengthTooLong and not {:?}", e),
         };
     }
 
-    #[test]
-    fn delete_key() {
+    #[async_std::test]
+    async fn delete_key() {
         let _ = env_logger::try_init();
-        let mut p = Protocol::connect("127.0.0.1:11211").unwrap();
+        let mut p = Protocol::connect("127.0.0.1:11211").await.unwrap();
         let key = "Hello Delete";
         let value = "World";
-        p.set(key, value, 1000).unwrap();
-        p.delete(key).unwrap();
-        p.delete(key).unwrap();
+        p.set(key, value, 1000).await.unwrap();
+        p.delete(key).await.unwrap();
+        p.delete(key).await.unwrap();
     }
 
-    #[test]
-    fn increment() {
+    #[async_std::test]
+    async fn increment() {
         let _ = env_logger::try_init();
-        let mut p = Protocol::connect("127.0.0.1:11211").unwrap();
+        let mut p = Protocol::connect("127.0.0.1:11211").await.unwrap();
         let key = "Hello Increment";
-        assert_eq!(p.increment(key, 1, 0, 1000).unwrap(), 0);
-        assert_eq!(p.increment(key, 1, 0, 1000).unwrap(), 1);
-        assert_eq!(p.increment(key, 1, 0, 1000).unwrap(), 2);
-        p.delete(key).unwrap();
+        assert_eq!(p.increment(key, 1, 0, 1000).await.unwrap(), 0);
+        assert_eq!(p.increment(key, 1, 0, 1000).await.unwrap(), 1);
+        assert_eq!(p.increment(key, 1, 0, 1000).await.unwrap(), 2);
+        p.delete(key).await.unwrap();
     }
 
-    #[test]
-    fn decrement() {
+    #[async_std::test]
+    async fn decrement() {
         let _ = env_logger::try_init();
-        let mut p = Protocol::connect("127.0.0.1:11211").unwrap();
+        let mut p = Protocol::connect("127.0.0.1:11211").await.unwrap();
         let key = "Hello Decrement";
-        assert_eq!(p.decrement(key, 1, 0, 1000).unwrap(), 0);
-        assert_eq!(p.decrement(key, 1, 0, 1000).unwrap(), 0);
-        assert_eq!(p.increment(key, 1, 0, 1000).unwrap(), 1);
-        assert_eq!(p.increment(key, 1, 0, 1000).unwrap(), 2);
-        assert_eq!(p.decrement(key, 1, 0, 1000).unwrap(), 1);
-        p.delete(key).unwrap();
+        assert_eq!(p.decrement(key, 1, 0, 1000).await.unwrap(), 0);
+        assert_eq!(p.decrement(key, 1, 0, 1000).await.unwrap(), 0);
+        assert_eq!(p.increment(key, 1, 0, 1000).await.unwrap(), 1);
+        assert_eq!(p.increment(key, 1, 0, 1000).await.unwrap(), 2);
+        assert_eq!(p.decrement(key, 1, 0, 1000).await.unwrap(), 1);
+        p.delete(key).await.unwrap();
     }
 }

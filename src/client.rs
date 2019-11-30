@@ -1,5 +1,6 @@
-use std::net::ToSocketAddrs;
-use std::sync::{Arc, Mutex};
+use async_std::net::ToSocketAddrs;
+use async_std::sync::{Arc, Mutex};
+use async_std::task;
 
 use conhash::{ConsistentHash, Node};
 
@@ -14,8 +15,11 @@ struct ClonableProtocol {
 impl Node for ClonableProtocol {
     fn name(&self) -> String {
         let protocol = self.clone();
-        let connection = protocol.connection.lock().unwrap();
-        connection.connection_info()
+        // necessary to implement expected sync trait
+        let connection_info =  task::block_on(async{
+            protocol.connection.lock().await.connection_info()
+        });
+        connection_info
     }
 }
 
@@ -25,14 +29,14 @@ pub struct MemcachedClient {
 }
 
 impl MemcachedClient {
-    pub fn new<A: ToSocketAddrs>(
+    pub async fn new<A: ToSocketAddrs>(
         addrs: Vec<A>,
         connections_per_addr: u8,
     ) -> Result<MemcachedClient> {
         let mut ch = ConsistentHash::new();
         for addr in &addrs {
             for _ in 0..connections_per_addr {
-                let protocol = protocol::Protocol::connect(addr)?;
+                let protocol = protocol::Protocol::connect(addr).await?;
                 ch.add(
                     &ClonableProtocol { connection: Arc::new(Mutex::new(protocol)) },
                     1,
@@ -42,56 +46,56 @@ impl MemcachedClient {
         Ok(MemcachedClient { connections: ch })
     }
 
-    pub fn set<K, V>(&self, key: K, value: V, time: u32) -> Result<()>
+    pub async fn set<K, V>(&self, key: K, value: V, time: u32) -> Result<()>
     where
         K: AsRef<[u8]>,
         V: protocol::ToMemcached,
     {
         let clonable_protocol = self.connections.get(key.as_ref()).unwrap();
-        let mut protocol = clonable_protocol.connection.lock().unwrap();
-        protocol.set(key, value, time)
+        let mut protocol = clonable_protocol.connection.lock().await;
+        protocol.set(key, value, time).await
     }
 
-    pub fn add<K, V>(&self, key: K, value: V, time: u32) -> Result<()>
+    pub async fn add<K, V>(&self, key: K, value: V, time: u32) -> Result<()>
     where
         K: AsRef<[u8]>,
         V: protocol::ToMemcached,
     {
         let clonable_protocol = self.connections.get(key.as_ref()).unwrap();
-        let mut protocol = clonable_protocol.connection.lock().unwrap();
-        protocol.add(key, value, time)
+        let mut protocol = clonable_protocol.connection.lock().await;
+        protocol.add(key, value, time).await
     }
 
-    pub fn replace<K, V>(&self, key: K, value: V, time: u32) -> Result<()>
+    pub async fn replace<K, V>(&self, key: K, value: V, time: u32) -> Result<()>
     where
         K: AsRef<[u8]>,
         V: protocol::ToMemcached,
     {
         let clonable_protocol = self.connections.get(key.as_ref()).unwrap();
-        let mut protocol = clonable_protocol.connection.lock().unwrap();
-        protocol.replace(key, value, time)
+        let mut protocol = clonable_protocol.connection.lock().await;
+        protocol.replace(key, value, time).await
     }
 
-    pub fn get<K, V>(&self, key: K) -> Result<V>
+    pub async fn get<K, V>(&self, key: K) -> Result<V>
     where
         K: AsRef<[u8]>,
         V: protocol::FromMemcached,
     {
         let clonable_protocol = self.connections.get(key.as_ref()).unwrap();
-        let mut protocol = clonable_protocol.connection.lock().unwrap();
-        protocol.get(key)
+        let mut protocol = clonable_protocol.connection.lock().await;
+        protocol.get(key).await
     }
 
-    pub fn delete<K>(&self, key: K) -> Result<()>
+    pub async fn delete<K>(&self, key: K) -> Result<()>
     where
         K: AsRef<[u8]>,
     {
         let clonable_protocol = self.connections.get(key.as_ref()).unwrap();
-        let mut protocol = clonable_protocol.connection.lock().unwrap();
-        protocol.delete(key)
+        let mut protocol = clonable_protocol.connection.lock().await;
+        protocol.delete(key).await
     }
 
-    pub fn increment<K>(
+    pub async fn increment<K>(
         &self,
         key: K,
         amount: u64,
@@ -102,11 +106,11 @@ impl MemcachedClient {
         K: AsRef<[u8]>,
     {
         let clonable_protocol = self.connections.get(key.as_ref()).unwrap();
-        let mut protocol = clonable_protocol.connection.lock().unwrap();
-        protocol.increment(key, amount, initial, time)
+        let mut protocol = clonable_protocol.connection.lock().await;
+        protocol.increment(key, amount, initial, time).await
     }
 
-    pub fn decrement<K>(
+    pub async fn decrement<K>(
         &self,
         key: K,
         amount: u64,
@@ -117,7 +121,7 @@ impl MemcachedClient {
         K: AsRef<[u8]>,
     {
         let clonable_protocol = self.connections.get(key.as_ref()).unwrap();
-        let mut protocol = clonable_protocol.connection.lock().unwrap();
-        protocol.decrement(key, amount, initial, time)
+        let mut protocol = clonable_protocol.connection.lock().await;
+        protocol.decrement(key, amount, initial, time).await
     }
 }

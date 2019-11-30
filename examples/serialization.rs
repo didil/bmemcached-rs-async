@@ -8,6 +8,7 @@ extern crate serde;
 extern crate serde_json;
 use bmemcached::{ToMemcached, FromMemcached, StoredType};
 use bmemcached::errors::Result;
+use async_std::task;
 
 #[derive(Debug, Serialize, Deserialize)]
 struct Data {
@@ -30,14 +31,16 @@ impl FromMemcached for Data {
 }
 
 fn main() {
-    let data = Data { name: "Testing".to_owned(), age: 8, registered: false };
-    let memcached = bmemcached::MemcachedClient::new(
-        vec!["127.0.0.1:11211"], 5).unwrap();
-    println!("Storing {:?}", data);
-    memcached.set("testing", &data, 10000).unwrap();
-    let rv: Vec<u8> = memcached.get("testing").unwrap();
-    let string = String::from_utf8(rv).unwrap();
-    println!("Raw data {:?}", string);
-    let rv: Data = memcached.get("testing").unwrap();
-    println!("Parsed data {:?}", rv);
+    task::block_on(async {
+        let data = Data { name: "Testing".to_owned(), age: 8, registered: false };
+        let memcached = bmemcached::MemcachedClient::new(
+            vec!["127.0.0.1:11211"], 5).await.unwrap();
+        println!("Storing {:?}", data);
+        memcached.set("testing", &data, 10000).await.unwrap();
+        let rv: Vec<u8> = memcached.get("testing").await.unwrap();
+        let string = String::from_utf8(rv).unwrap();
+        println!("Raw data {:?}", string);
+        let rv: Data = memcached.get("testing").await.unwrap();
+        println!("Parsed data {:?}", rv);    
+    });
 }

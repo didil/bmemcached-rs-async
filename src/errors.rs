@@ -3,7 +3,7 @@ use crate::protocol::{Status, KEY_MAXIMUM_SIZE};
 
 error_chain! {
     foreign_links {
-        IoError(::std::io::Error);
+        IoError(async_std::io::Error);
         Utf8Error(::std::string::FromUtf8Error);
     }
 
