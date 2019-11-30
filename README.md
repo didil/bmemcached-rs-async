@@ -8,7 +8,7 @@ Experimental port of [bmemcached-rs](https://github.com/jaysonsantos/bmemcached-
 use async_std::sync::Arc;
 use async_std::task;
 
-use bmemcached::MemcachedClient;
+use bmemcached_async::MemcachedClient;
 
 fn main() {
     task::block_on(async{
