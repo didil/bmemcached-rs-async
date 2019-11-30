@@ -1,9 +1,5 @@
-extern crate env_logger;
-extern crate log;
-use bmemcached;
-
-use bmemcached::errors::{Error, ErrorKind};
-use bmemcached::{MemcachedClient, Status};
+use bmemcached_async::errors::{Error, ErrorKind};
+use bmemcached_async::{MemcachedClient, Status};
 use async_std::task;
 use async_std::sync::Arc;
 

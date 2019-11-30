@@ -1,11 +1,10 @@
 [package]
-name = "bmemcached"
+name = "bmemcached-async"
 version = "0.5.0"
-authors = ["Jayson Reis <santosdosreis@gmail.com>"]
-description = "Memcached binary protocol in pure rust with support for 'pools' and consistent hashing. (For now minor versions will break API until v1 is released)"
-homepage = "https://github.com/jaysonsantos/bmemcached-rs"
-repository = "https://github.com/jaysonsantos/bmemcached-rs"
-documentation = "https://jaysonsantos.github.io/bmemcached-rs/bmemcached/index.html"
+authors = ["Jayson Reis <santosdosreis@gmail.com>","Adil H"]
+description = "(Async) Memcached binary protocol in pure rust with support for 'pools' and consistent hashing. (For now minor versions will break API until v1 is released)"
+homepage = "https://github.com/didil/bmemcached-rs-async"
+repository = "https://github.com/didil/bmemcached-rs-async"
 license = "MIT"
 readme = "README.md"
 edition = "2018"

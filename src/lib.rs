@@ -6,7 +6,7 @@ and receive `T` and consistent hashing to select connections from a pool to dist
 use async_std::sync::Arc;
 use async_std::task;
 
-use bmemcached::MemcachedClient;
+use bmemcached_async::MemcachedClient;
 
 #[async_std::main]
 async fn main() {

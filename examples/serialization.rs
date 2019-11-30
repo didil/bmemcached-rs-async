@@ -2,12 +2,11 @@
 This is an example of how to make bmemcached save your own types and it uses serde for serializing
 and deserializing.
 */
-extern crate bmemcached;
 #[macro_use] extern crate serde_derive;
 extern crate serde;
 extern crate serde_json;
-use bmemcached::{ToMemcached, FromMemcached, StoredType};
-use bmemcached::errors::Result;
+use bmemcached_async::{ToMemcached, FromMemcached, StoredType};
+use bmemcached_async::errors::Result;
 use async_std::task;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -33,7 +32,7 @@ impl FromMemcached for Data {
 fn main() {
     task::block_on(async {
         let data = Data { name: "Testing".to_owned(), age: 8, registered: false };
-        let memcached = bmemcached::MemcachedClient::new(
+        let memcached = bmemcached_async::MemcachedClient::new(
             vec!["127.0.0.1:11211"], 5).await.unwrap();
         println!("Storing {:?}", data);
         memcached.set("testing", &data, 10000).await.unwrap();
